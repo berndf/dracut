@@ -55,18 +55,25 @@ GENERATOR_DIR="$2"
 
 [ -d "$GENERATOR_DIR" ] || mkdir "$GENERATOR_DIR"
 
+getargbool 0 rd.live.overlay.overlayfs && overlayfs="yes"
 ROOTFLAGS="$(getarg rootflags)"
 {
     echo "[Unit]"
     echo "Before=initrd-root-fs.target"
     echo "[Mount]"
     echo "Where=/sysroot"
-    echo "What=/dev/mapper/live-rw"
-    [ -n "$ROOTFLAGS" ] && echo "Options=${ROOTFLAGS}"
+    if [ -n "$overlayfs" ]; then
+        echo "What=LiveOS_rootfs"
+        echo "Options=${ROOTFLAGS},lowerdir=/run/rootfsbase,upperdir=/run/overlayfs,workdir=/run/ovlwork"
+        echo "Type=overlay"
+    else
+        echo "What=/dev/mapper/live-rw"
+        [ -n "$ROOTFLAGS" ] && echo "Options=${ROOTFLAGS}"
+    fi
 } > "$GENERATOR_DIR"/sysroot.mount
 
 mkdir -p "$GENERATOR_DIR/dev-mapper-live\x2drw.device.d"
 {
     echo "[Unit]"
-    echo "JobTimeoutSec=3000"
+    echo "JobTimeoutSec=30"
 } > "$GENERATOR_DIR/dev-mapper-live\x2drw.device.d/timeout.conf"
