@@ -162,15 +162,17 @@ do_live_overlay() {
         fi
     fi
 
-    # set up the snapshot
-    sz=$(blockdev --getsz $BASE_LOOPDEV)
-    if [ -n "$readonly_overlay" ]; then
-        echo 0 $sz snapshot $BASE_LOOPDEV $OVERLAY_LOOPDEV N 8 | dmsetup create --readonly live-ro
-        base="/dev/mapper/live-ro"
-        over=$RO_OVERLAY_LOOPDEV
-    else
-        base=$BASE_LOOPDEV
-        over=$OVERLAY_LOOPDEV
+    if [ -z "$overlayfs" ]; then
+	# set up the snapshot
+	sz=$(blockdev --getsz $BASE_LOOPDEV)
+	if [ -n "$readonly_overlay" ]; then
+	    echo 0 $sz snapshot $BASE_LOOPDEV $OVERLAY_LOOPDEV N 8 | dmsetup create --readonly live-ro
+	    base="/dev/mapper/live-ro"
+	    over=$RO_OVERLAY_LOOPDEV
+	else
+	    base=$BASE_LOOPDEV
+	    over=$OVERLAY_LOOPDEV
+	fi
     fi
 
     if [ -n "$thin_snapshot" ]; then
@@ -198,8 +200,10 @@ do_live_overlay() {
         echo 0 $sz snapshot $base $over PO 8 | dmsetup create live-rw
     fi
 
-    # Create a device that always points to a ro base image
-    echo 0 $sz linear $BASE_LOOPDEV 0 | dmsetup create --readonly live-base
+    if [ -z "$overlayfs" ]; then
+	# Create a device that always points to a ro base image
+	echo 0 $sz linear $BASE_LOOPDEV 0 | dmsetup create --readonly live-base
+    fi
 }
 
 # live cd helper function
@@ -285,6 +289,9 @@ if [ -n "$FSIMG" ] ; then
         losetup -r $BASE_LOOPDEV $FSIMG
         do_live_from_base_loop
     fi
+elif [ -n "$overlayfs" ]; then
+    # Without an image, we try the squashfs itself as root!
+    do_live_from_base_loop
 fi
 
 [ -e "$SQUASHED" ] && [ -z "$overlayfs" ] && umount -l /run/initramfs/squashfs
@@ -306,15 +313,21 @@ if [ -n "$overlayfs" ]; then
         rm -r -- $(readlink /run/overlayfs)
         mkdir -m 0755 $(readlink /run/overlayfs)
     fi
-    if [ -n "$readonly_overlay" ]; then
-        mkdir -m 0755 /run/rootfsbase-r
-        mount -r $FSIMG /run/rootfsbase-r
-        mount -t overlay LiveOS_rootfs-r -oro,lowerdir=/run/overlayfs-r:/run/rootfsbase-r /run/rootfsbase
+    if [ -n "$FSIMG" ] ; then
+     if [ -n "$readonly_overlay" ]; then
+	 mkdir -m 0755 /run/rootfsbase-r
+	 mount -r $FSIMG /run/rootfsbase-r
+	 mount -t overlay LiveOS_rootfs-r -oro,lowerdir=/run/overlayfs-r:/run/rootfsbase-r /run/rootfsbase
+     else
+	 mount -r $FSIMG /run/rootfsbase
+     fi
+     # Maintain a link at /dev/mapper/live-rw in case legacy code expects it.
+     ln -s /dev/mapper/live-base /dev/mapper/live-rw
     else
-        mount -r $FSIMG /run/rootfsbase
+     mount --bind /run/initramfs/squashfs /run/rootfsbase
+     # check-finished checks presence of this file...
+     echo >/dev/mapper/live-rw
     fi
-    # Maintain a link at /dev/mapper/live-rw in case legacy code expects it.
-    ln -s /dev/mapper/live-base /dev/mapper/live-rw
 else
     ln -s /dev/mapper/live-rw /dev/root
     if [ -z "$DRACUT_SYSTEMD" ]; then
